@@ -26,8 +26,8 @@ XGB_PARAMS = dict(objective="binary:logistic", eval_metric="logloss", tree_metho
                   subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0, min_child_weight=1.0)
 
 
-def path(work, kind=KIND):
-    return work / ("model.txt" if kind == "lgb" else "model.xgb.ubj")
+def path(work, kind=KIND, name="model"):
+    return work / (f"{name}.txt" if kind == "lgb" else f"{name}.xgb.ubj")
 
 
 def fit(X, y, features, X_va=None, y_va=None, rounds=MAX_ROUNDS):
@@ -60,17 +60,17 @@ def predict(m, X, n_iter=None, kind=KIND) -> np.ndarray:
     return m.inplace_predict(X, iteration_range=rng)
 
 
-def save(m, work):
-    m.save_model(str(path(work)))
+def save(m, work, name="model"):
+    m.save_model(str(path(work, name=name)))
 
 
-def load(work, kind):
+def load(work, kind, name="model"):
     if kind == "lgb":
         import lightgbm as lgb
-        return lgb.Booster(model_file=str(path(work, kind)))
+        return lgb.Booster(model_file=str(path(work, kind, name)))
     import xgboost as xgb
     m = xgb.Booster()
-    m.load_model(str(path(work, kind)))
+    m.load_model(str(path(work, kind, name)))
     if shutil.which("nvidia-smi"):
         m.set_param({"device": "cuda"})
     return m

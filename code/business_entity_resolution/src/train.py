@@ -2,7 +2,7 @@
 
 Decision rule (each S2/S3 record belongs to at most one S1 in the training data):
   a record is assigned to its highest-probability candidate if that probability > t.
-Usage: python train.py [sample_fraction]     (BER_MODEL=xgb for XGBoost on GPU, see model.py)
+Usage: python train.py [sample_fraction]     (1.0 = full train, recommended; BER_MODEL=xgb for XGBoost on GPU, see model.py)
 Outputs: WORK/model.txt or model.xgb.ubj, WORK/decision.json, WORK/oof.parquet
 """
 import json
@@ -35,7 +35,9 @@ def decide(scored: pl.DataFrame, t: float) -> pl.DataFrame:
 
 def main(fraction=0.25):
     t0 = time.time()
-    feat = pl.read_parquet(WORK / "train_cand_sample_feat_parts" / "*.parquet")
+    # fraction 1.0 = all train S2/S3 records (test-like decoy density); < 1 = legacy S1 sample
+    name = "train_cand" if fraction >= 1 else "train_cand_sample"
+    feat = pl.read_parquet(WORK / f"{name}_feat_parts" / "*.parquet")
     truth = truth_pairs()
     feat = (feat.join(truth.with_columns(y=pl.lit(1, pl.Int8)), on=["s23k", "s1k"], how="left")
             .with_columns(pl.col("y").fill_null(0))
@@ -83,4 +85,4 @@ def main(fraction=0.25):
 
 
 if __name__ == "__main__":
-    main(float(sys.argv[1]) if len(sys.argv) > 1 else 0.25)
+    main(float(sys.argv[1]) if len(sys.argv) > 1 else 1.0)
