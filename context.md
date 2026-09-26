@@ -39,6 +39,7 @@ This file is the single source of truth for the team: the problem, what has been
   - **The Kaggle session hard-stops ~07:00 IST** (12 h max; it started ~19:00). Download the outputs before then.
   - The laptop that drives it must stay awake with the tab open (sleep disabled). If the browser display freezes, the kernel keeps running; a new cell simply queues.
 - **Check-ins:** after `prune.py train` (~01:30) → `print(open('/tmp/v4/logs/prune_train.log').read()[-3000:])`; after train → `.../train_1.0.log`; at the end → `validate.log`.
+- **Queued right after v4 (same session):** `decide.py` (decision tuning → `/kaggle/working/output_v4b/`), validator on it, `review.py France`, and small artifacts copied to `/kaggle/working/artifacts_v4/`. `oof.parquet`/`test_scored.parquet` live in `/tmp/v4` and vanish at session end, so tuning must run in this session.
 - **Next action when it finishes:** if validator = PASS → download `output_v4/matching_results.tsv` + `candidate_pairs.tsv` → upload `matching_results.tsv` to the portal = **submission #2** → log LB vs CV in §6 → stop the session (⏻) to save GPU quota.
 - **If it crashed:** read the traceback; steps are resumable (see §5 "Resumability"), fix the code locally, push, `exec(CELLS[0], globals())` (git pull) in the notebook, rerun from the failed step.
 - **GPU quota:** 30 h/week free. ~5.3 h used before v4, ~9.5 h after v4 → ~20 h left for 27 Sep (enough for 2–3 more full runs).
@@ -114,6 +115,8 @@ prep → block → embed (GPU) → prune (GPU) → features → train (GPU) │ 
 | 5 | `features.py` | ~47 features: RapidFuzz ratio/token_set/token_sort/partial/JW on names/addresses, house-number & legal-form difference detectors, unmatched name words, blocking + embedding + stage-1 scores, flags. Process pool sized to the CPUs. |
 | 6 | `train.py` + `model.py` | `BER_MODEL=xgb` (XGBoost `device=cuda`, lossguide 63 leaves, lr 0.1, ≤ 2000 rounds, early stop 50) or `lgb` (LightGBM CPU, ≤ 800). 2-fold CV grouped by true S1. `train.py 1.0` = **all train records** (honest decoy density). Decision: each S2/S3 → its argmax S1 if p > t; t grid 0.05–0.95 tuned on OOF macro F0.5. Saves `model.*`, `decision.json` (threshold, cv, backend, feature list), `oof.parquet`. |
 | 7 | `predict.py` | Loads the backend named in `decision.json`, scores test feature parts, writes `matching_results.tsv` and `candidate_pairs.tsv` (+ `test_scored.parquet`). |
+| 8 | `decide.py` | **Decision tuning** on `oof.parquet` (no retraining): global t, **margin** over the record's runner-up S1, **s1_min** (drop an S1's matches if its strongest is weak), per-country t (France uses global). Coordinate ascent on official macro F0.5 over all train S1. Re-applies to `test_scored.parquet` → new `matching_results.tsv` (candidates unchanged). Writes `decision_tuned.json`. Minutes, not hours. |
+| — | `review.py` | `python review.py France 25`: random accepted, borderline accepted and borderline rejected test pairs for a country, raw text side by side (France has no labels). |
 | — | `metric.py` | Exact official macro F0.5 (per S1, singletons included). |
 | — | `learn_indic.py`, `step1_inspect.py` | Indic dictionary learning; data inspection report. |
 
