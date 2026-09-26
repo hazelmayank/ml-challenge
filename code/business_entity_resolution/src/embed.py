@@ -20,10 +20,16 @@ import os
 import shutil
 import time
 
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")   # keep notebook logs readable
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+
 import numpy as np
 import polars as pl
 import torch
 from transformers import AutoModel, AutoTokenizer
+from transformers.utils import logging as hf_logging
+
+hf_logging.disable_progress_bar()
 
 from block import TOP_K, recall, sample_s23_keys
 from config import WORK, parts_dir
