@@ -1,6 +1,6 @@
 # Amazon ML Challenge 2026: Project Context
 
-_Last updated: 25 Sep 2026, ~21:45 IST_
+_Last updated: 26 Sep 2026, ~18:50 IST_
 
 This file is the single source of truth for the team: what the problem is, what has been built, what we learned from the data, current scores, and what comes next.
 
@@ -34,6 +34,14 @@ This file is the single source of truth for the team: what the problem is, what 
 - AWS: account `hazel.mayank`, bucket `s3://amlc26-hazel.mayank` (us-east-1), dataset zip uploaded. Every SageMaker quota on this new account is 0 (domains, `ml.m5.2xlarge` notebook), so SageMaker is blocked. Quota requests are pending. `ml.t3.medium` notebook (free tier) is the only likely option and is weaker than the laptop.
 - GPU options if needed later: Kaggle/Colab free T4, or a teammate's older AWS account.
 - Python env: `.venv/` in the workspace root. Pinned in `code/business_entity_resolution/requirements.txt`.
+
+### 2a. Kaggle (from 26 Sep evening): the main compute
+- SageMaker dropped. Code lives in GitHub **hazelmayank/ml-challenge** (public, branch `main`), pushed from this folder. An allow-list `.gitignore` keeps data, work, output, `.venv` and the tarball out.
+- Runner: `kaggle/kaggle_runner.ipynb` (clone/pull → deps + LightGBM GPU check → 2% smoke test in `work_smoke/` → full train → test → validator → artifacts tagged with the commit).
+- Kaggle gives ~30 GB RAM but only ~4 CPU cores, and `/kaggle/working` holds ~20 GB. The pipeline is CPU-bound; a GPU only helps LightGBM, and only if the runner's check passes.
+- v2 train OOM fixed: features are cast to float32 in polars before `to_numpy`. v2 has not been trained yet.
+- Feature speed is ~12 s per 250k pairs on the laptop. The 8 h in `feat_train_v2.log` was a stall, not compute.
+- `block.py` / `features.py` resume from existing parts, so after changing code, delete the parts folders (`fresh()` in the runner).
 
 ## 3. Data facts (from `reports/step1_inspection.json`)
 
