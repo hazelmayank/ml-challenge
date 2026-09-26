@@ -8,12 +8,12 @@ Outputs: OUTPUT/matching_results.tsv, OUTPUT/candidate_pairs.tsv, WORK/test_scor
 import json
 import time
 
-import lightgbm as lgb
 import numpy as np
 import polars as pl
 
+import model as backend
 from config import OUTPUT, WORK
-from features import FEATURES, RECORDS
+from features import RECORDS
 from train import decide
 
 S1_BATCH = 200_000
@@ -37,13 +37,16 @@ def write_lists(pairs: pl.LazyFrame, s1: pl.DataFrame, s23: pl.DataFrame, col: s
 
 def main():
     t0 = time.time()
-    model = lgb.Booster(model_file=str(WORK / "model.txt"))
-    t = json.loads((WORK / "decision.json").read_text())["threshold"]
+    decision = json.loads((WORK / "decision.json").read_text())
+    t, kind = decision["threshold"], decision.get("model", "lgb")
+    features = decision.get("features") or __import__("features").FEATURES
+    model = backend.load(WORK, kind)
+    print(f"model {kind}, {len(features)} features, t={t}", flush=True)
     parts = sorted((WORK / "test_cand_feat_parts").glob(f"*_{RECORDS}.parquet"))
     scored_parts, match_parts = [], []
     for i, part in enumerate(parts):
         feat = pl.read_parquet(part)
-        p = model.predict(feat.select(FEATURES).to_numpy().astype(np.float32))
+        p = backend.predict(model, feat.select(pl.col(features).cast(pl.Float32)).to_numpy(), kind=kind)
         scored = feat.select("s23k", "s1k").with_columns(p=pl.Series(p, dtype=pl.Float32))
         scored_parts.append(scored)
         match_parts.append(decide(scored, t))

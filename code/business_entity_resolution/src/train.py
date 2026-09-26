@@ -2,30 +2,21 @@
 
 Decision rule (each S2/S3 record belongs to at most one S1 in the training data):
   a record is assigned to its highest-probability candidate if that probability > t.
-Usage: python train.py [sample_fraction]
-Outputs: WORK/model.txt, WORK/decision.json, WORK/oof.parquet
+Usage: python train.py [sample_fraction]     (BER_MODEL=xgb for XGBoost on GPU, see model.py)
+Outputs: WORK/model.txt or model.xgb.ubj, WORK/decision.json, WORK/oof.parquet
 """
 import json
-import os
 import sys
 import time
 
-import lightgbm as lgb
 import numpy as np
 import polars as pl
 
 from block import sample_s1_keys
 from config import WORK
 from features import FEATURES
+import model
 from metric import macro_f05
-
-MAX_ROUNDS = 800
-PARAMS = dict(objective="binary", learning_rate=0.1, num_leaves=63, min_data_in_leaf=100,
-              feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=1.0,
-              num_threads=0, verbose=-1)
-# BER_LGB_DEVICE=gpu|cuda switches LightGBM to a GPU backend (only if the installed build supports it).
-if os.environ.get("BER_LGB_DEVICE", "cpu") != "cpu":
-    PARAMS["device_type"] = os.environ["BER_LGB_DEVICE"]
 
 
 def truth_pairs():
@@ -58,18 +49,16 @@ def main(fraction=0.25):
     y = feat["y"].to_numpy()
     fold = feat["fold"].to_numpy()
     feat = feat.select("s23k", "s1k", "y")
-    print(f"X {X.shape} {X.nbytes / 1e9:.1f} GB", flush=True)
+    print(f"X {X.shape} {X.nbytes / 1e9:.1f} GB  model={model.KIND}", flush=True)
     oof = np.zeros(len(feat), dtype=np.float32)
     iters = []
     for f in (0, 1):
         tr, va = fold != f, fold == f
-        dtr = lgb.Dataset(X[tr], y[tr], feature_name=FEATURES, params=PARAMS).construct()
-        dva = lgb.Dataset(X[va], y[va], reference=dtr).construct()
-        m = lgb.train(PARAMS, dtr, MAX_ROUNDS, valid_sets=[dva],
-                      callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(200)])
-        oof[va] = m.predict(X[va], num_iteration=m.best_iteration)
-        iters.append(m.best_iteration)
-        print(f"fold {f}: best_iter {m.best_iteration} {time.time() - t0:.0f}s", flush=True)
+        m, best_iter = model.fit(X[tr], y[tr], FEATURES, X[va], y[va])
+        oof[va] = model.predict(m, X[va], best_iter)
+        iters.append(best_iter)
+        print(f"fold {f}: best_iter {best_iter} {time.time() - t0:.0f}s", flush=True)
+        del m
 
     scored = feat.with_columns(p=pl.Series(oof))
     scored.write_parquet(WORK / "oof.parquet")
@@ -84,10 +73,11 @@ def main(fraction=0.25):
             best = (r["macro_f05"], float(t))
     print(f"BEST t={best[1]:.2f} macro_f05={best[0]}")
 
-    final = lgb.train(PARAMS, lgb.Dataset(X, y, feature_name=FEATURES), int(np.mean(iters) * 1.1))
-    final.save_model(str(WORK / "model.txt"))
-    (WORK / "decision.json").write_text(json.dumps({"threshold": best[1], "cv": best[0]}))
-    imp = sorted(zip(FEATURES, final.feature_importance("gain")), key=lambda x: -x[1])
+    final, _ = model.fit(X, y, FEATURES, rounds=int(np.mean(iters) * 1.1))
+    model.save(final, WORK)
+    (WORK / "decision.json").write_text(json.dumps(
+        {"threshold": best[1], "cv": best[0], "model": model.KIND, "features": FEATURES}))
+    imp = sorted(model.importance(final, FEATURES).items(), key=lambda x: -x[1])
     print("top features:", [(n, round(g / 1e3)) for n, g in imp[:12]])
     print(f"done {time.time() - t0:.0f}s")
 
