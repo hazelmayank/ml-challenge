@@ -1,0 +1,22 @@
+# Allow-list: this folder also holds the dataset, tarball, venv and multi-GB work files.
+# Everything is ignored unless explicitly re-included below.
+/*
+!/.gitignore
+!/context.md
+!/kaggle/
+!/code/
+!/student_resource/
+/student_resource/*
+!/student_resource/utils/
+!/student_resource/Documentation_template.md
+
+# Never commit these, even inside allowed folders
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.parquet
+*.tsv
+*.log
+.env
+*.pem
+*.key
