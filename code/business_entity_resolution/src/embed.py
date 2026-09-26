@@ -72,6 +72,21 @@ class Encoder:
         return out
 
 
+def cached(enc, df: pl.DataFrame, name: str) -> torch.Tensor:
+    """Embeddings of df's raw name|address, cached on disk (fp16 .npy) and keyed by the
+    record keys: normalisation changes do not touch the raw text, so reruns skip the GPU."""
+    folder = WORK / "emb_cache" / MODEL.replace("/", "_")
+    folder.mkdir(parents=True, exist_ok=True)
+    keys = df["k"].to_numpy()
+    tag = f"{name}_{len(keys)}_{int(keys[0])}_{int(keys[-1])}"
+    f = folder / f"{tag}.npy"
+    if f.exists():
+        return torch.from_numpy(np.load(f)).to(DEV, DTYPE)
+    e = enc(texts(df))
+    np.save(f, e.to(torch.float16).cpu().numpy())
+    return e
+
+
 def texts(df: pl.DataFrame) -> list:
     return df.select(pl.concat_str(pl.lit("query: "), pl.col("business_name").fill_null(""),
                                    pl.lit(" | "), pl.col("business_address").fill_null(""))
@@ -103,7 +118,7 @@ def run(split, sample=None, probe=None):
     s1 = pl.read_parquet(WORK / f"{split}_s1.parquet",
                          columns=["k", "country", "business_name", "business_address"]).sort("k")
     assert s1["k"].to_list()[-1] == len(s1) - 1
-    e1 = enc(texts(s1))
+    e1 = cached(enc, s1, f"{split}_s1")
     by_country = {}
     for c in s1["country"].unique().to_list():
         ids = torch.from_numpy(s1.filter(pl.col("country") == c)["k"].to_numpy().astype(np.int64)).to(DEV)
@@ -127,7 +142,7 @@ def run(split, sample=None, probe=None):
         part = tmp / f"{lo:09d}_{CHUNK}.parquet"
         if part.exists():
             continue
-        e23 = enc(texts(chunk))
+        e23 = cached(enc, chunk, f"{split}_s23")
         found = []
         for c, (keys, key_ids) in by_country.items():
             rows = np.flatnonzero((chunk["country"] == c).to_numpy())

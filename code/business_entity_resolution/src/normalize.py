@@ -29,7 +29,7 @@ LEGAL_CANON = {
     "pllc": "pllc", "sarl": "sarl", "sas": "sas", "sasu": "sasu", "eurl": "eurl", "sa": "sa",
     "sci": "sci", "gmbh": "gmbh", "md": "md", "dmd": "dmd", "dds": "dds", "od": "od",
     "cpa": "cpa", "esq": "esq", "phd": "phd", "dvm": "dvm", "jr": "jr", "sr": "sr",
-    "pa": "pa", "ltda": "ltd",
+    "pa": "pa", "ltda": "ltd", "snc": "snc",
 }
 LEGAL = {
     "llc", "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited",
@@ -86,6 +86,36 @@ IN_STATES = {
 # States are only canonicalised in addresses; applied as whole-phrase replacements.
 STATE_PATTERNS = sorted({**US_STATES, **IN_STATES}.items(), key=lambda kv: -len(kv[0]))
 
+# Words the data generator injects into S2/S3 names, found per country as words far more
+# frequent in S2/S3 than in S1 (France measured on the test set: it has no training data).
+# Applied only to that country's records; other countries get the generic LEGAL list.
+FILLER = {
+    "France": {"participations", "holding", "snc", "distribution", "associes",
+               "international", "developpement", "groupe", "et", "as"},
+    "US": {"formerly", "midtown", "northside", "eastgate", "greater", "southside",
+           "riverside", "westgate", "lakeside", "as", "aka"},
+    "India": {"m", "s", "overseas", "infratech", "as", "aka"},
+}
+# French abbreviations S2/S3 use and S1 spells out ("R." is in 25% of French S2/S3 records),
+# and departments that S2/S3 use in place of S1's region.
+FR_STREET = {"r": "rue", "ch": "chemin", "crs": "cours", "q": "quai", "all": "allee",
+             "appt": "appartement", "app": "appartement", "bat": "batiment",
+             "res": "residence", "ste": "sainte"}
+FR_REGIONS = sorted({
+    "loire atlantique": "pays de la loire", "gironde": "nouvelle aquitaine",
+    "nord": "hauts de france", "pas de calais": "hauts de france",
+}.items(), key=lambda kv: -len(kv[0]))
+# Indian state names written in Indic script inside S2/S3 addresses (~2M fields); plain
+# transliteration turns them into "mhaaraassttr", "dillii", ... which match nothing.
+ADDR_INDIC = {
+    "महाराष्ट्र": "Maharashtra", "दिल्ली": "Delhi", "उत्तर प्रदेश": "Uttar Pradesh",
+    "ಕರ್ನಾಟಕ": "Karnataka", "தமிழ்நாடு": "Tamil Nadu", "ગુજરાત": "Gujarat",
+    "পশ্চিমবঙ্গ": "West Bengal", "తెలంగాణ": "Telangana", "हरियाणा": "Haryana",
+    "राजस्थान": "Rajasthan", "കേരളം": "Kerala", "बिहार": "Bihar",
+    "मध्य प्रदेश": "Madhya Pradesh", "ఆంధ్రప్రదేశ్": "Andhra Pradesh", "ਪੰਜਾਬ": "Punjab",
+    "ଓଡ଼ିଶା": "Odisha",
+}
+
 _NON_ASCII = re.compile(r"[^\x00-\x7f]")
 _INDIC = re.compile(r"[ऀ-෿]")
 
@@ -116,10 +146,21 @@ def _replace_words(expr: pl.Expr, mapping: dict) -> pl.Expr:
                                  [f" {mapping[w]} " if mapping[w] else " " for w in words])
 
 
+def _by_country(base: pl.Expr, variants: dict) -> pl.Expr:
+    """base, replaced by variants[country](base) for the countries listed."""
+    out = base
+    for country, fn in variants.items():
+        out = pl.when(pl.col("country") == country).then(fn(base)).otherwise(out)
+    return out
+
+
 def normalize(df: pl.DataFrame) -> pl.DataFrame:
     """df has entity_id, business_name, business_address, country."""
     name_raw = df["business_name"]
-    addr_raw = df["business_address"]
+    addr_raw = (df["business_address"]
+                .str.replace_many(list(ADDR_INDIC), list(ADDR_INDIC.values()))
+                .str.replace_all("Â ", " ")      # mojibake non-breaking space
+                .str.replace_all(r"[°º]", "o"))              # N° / Nº -> "No" (dropped)
     df = df.with_columns(
         script=pl.when(name_raw.str.contains(r"[ऀ-෿]")).then(pl.lit("indic"))
         .otherwise(pl.lit("latin")),
@@ -131,6 +172,8 @@ def normalize(df: pl.DataFrame) -> pl.DataFrame:
 
     name = (pl.col("name_ascii").str.to_lowercase()
             .str.replace(r"\.(com|net|org|in|co|fr|us)$", "")
+            .str.replace_all(r"\bid\s*:?\s*\d+", " ")          # "(ID: 34016)" junk
+            .str.replace_all(r"\b(?:[dlj]|qu)['`]\s*", "")      # French elision d'/l'/qu'
             .str.replace_all(r"[&+]", " and ")
             .str.replace_all(r"\.", "")
             .str.replace_all(r"\d{6,}", " ")
@@ -139,6 +182,8 @@ def normalize(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(name_norm=name.str.replace_all(r"\s+", " ").str.strip_chars())
     core = pl.concat_str(pl.lit(" "), pl.col("name_norm").str.replace_all(" ", "  "), pl.lit(" "))
     core = _replace_words(core, {w: "" for w in LEGAL})
+    core = _by_country(core, {c: (lambda e, ws=ws: _replace_words(e, {w: "" for w in ws}))
+                              for c, ws in FILLER.items()})
     df = df.with_columns(name_core=core.str.replace_all(r"\s+", " ").str.strip_chars())
     df = df.with_columns(
         name_core=pl.when(pl.col("name_core") == "").then(pl.col("name_norm"))
@@ -153,6 +198,8 @@ def normalize(df: pl.DataFrame) -> pl.DataFrame:
 
     addr_lower = (pl.col("addr_ascii").str.to_lowercase()
                   .str.replace_all(r"<?null>?", " ")
+                  .str.replace_all(r"\b(?:[dlj]|qu)['`]\s*", "")
+                  .str.replace_all(r"(\d+)(?:eme|e|er|ere)\b", "$1")
                   .str.replace_all(r"(\d+)(st|nd|rd|th)\b", "$1"))
     df = df.with_columns(
         addr_ids=addr_lower.str.extract_all(r"[0-9a-z]*\d[0-9a-z]*(?:[/-][0-9a-z]*\d[0-9a-z]*)*")
@@ -162,9 +209,12 @@ def normalize(df: pl.DataFrame) -> pl.DataFrame:
     addr = addr_lower.str.replace_all(r"[^a-z0-9]+", " ")
     addr = pl.concat_str(pl.lit(" "), addr.str.replace_all(" ", "  "), pl.lit(" "))
     addr = _replace_words(addr, ORDINAL_WORDS)
+    addr = _by_country(addr, {"France": lambda e: _replace_words(e, FR_STREET)})
     addr = _replace_words(addr, STREET)
     addr = addr.str.replace_all(r"\s+", " ")
     addr = _replace_words(addr, dict(STATE_PATTERNS))
+    addr = _by_country(addr, {"France": lambda e: _replace_words(e, dict(FR_REGIONS))})
+    addr = _replace_words(addr, {"pmb": "", "cdp": ""})     # US S2/S3-only tokens
     addr = addr.str.replace_all(r"\b0+(\d)", "$1")
     df = df.with_columns(addr_norm=addr.str.replace_all(r"\s+", " ").str.strip_chars())
     df = df.with_columns(
