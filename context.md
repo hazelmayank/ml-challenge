@@ -1,49 +1,80 @@
-# Amazon ML Challenge 2026: Project Context
+# Amazon ML Challenge 2026: Project Context & Handoff
 
-_Last updated: 26 Sep 2026, ~23:55 IST_
+_Last updated: 27 Sep 2026, ~00:40 IST_
 
-This file is the single source of truth for the team: what the problem is, what has been built, what we learned from the data, current scores, and what comes next.
+This file is the single source of truth for the team: the problem, what has been built, what we learned, every score so far, what is running right now, and the plan to the deadline. It is written so that someone on a **new machine** (or a fresh Claude session) can continue without the chat history.
 
 ---
+
+## 0. Quick start on a new machine
+
+1. **Get the code:** `git clone https://github.com/hazelmayank/ml-challenge.git` (public, branch `main`). Everything in this repo is the current pipeline. Commit history = experiment history.
+2. **Get the data** (not in Git, 1+ GB): either the Kaggle dataset **`mayankagarwal007/amazon-ml-2026-resources`** (mounted in Kaggle notebooks under `/kaggle/input/...`, the runner auto-detects it), or the original `student_resource.tar.gz` (on the old laptop in `Downloads/6ab10eb3b23ba_student_resource/`). Locally the pipeline expects `student_resource/dataset/{train,test}/*.tsv` next to `code/`, or set `BER_DATA`.
+3. **Heavy runs happen on Kaggle** (notebook `notebook9cc53584ee` on account `mayankagarwal007`, GPU T4 ×2, Internet on). See §2 for what is running and §9 for the exact cells.
+4. **Local Python env** (only for small tests / analysis): Python 3.11+, `pip install -r code/business_entity_resolution/requirements.txt` (torch/transformers/xgboost are only needed for `embed.py` / XGBoost; CPU builds work for tiny tests).
+5. Things that exist **only on the old laptop** (not in Git): `output/` (v1 submission files, validated PASS), `work/` (old v1/v2 intermediate parquet), `test.md` (old chat notes), the problem-statement PDF, `.venv/`. None of these are needed to continue. A stale second checkout `OneDrive/Documents/ChatGPT/ml-challenge` (only `KAGGLE_HANDOFF.md` + `tmp/`) can be ignored.
 
 ## 1. Competition at a glance
 
 | Item | Detail |
 |---|---|
 | Task | **Business entity resolution.** For every Source 1 (S1) business, find all Source 2 / Source 3 (S2/S3) records that are the same real-world business. |
-| Metric | **Macro F0.5**, computed per S1 entity and then averaged. Singletons: an empty prediction scores 1.0, any predicted match scores 0.0. |
-| Scored file | `output/matching_results.tsv` (tab-separated, one row per test S1, comma-joined IDs, empty when there are no matches) |
-| Also required | `output/candidate_pairs.tsv`: the exact candidate set the model scored. Final matches must be a subset of it. |
-| Validator | `student_resource/utils/validate_submission.py --matching ... --candidate ... --test-dir dataset/test` |
-| Hackathon window | 72 hours, **25–27 Sep 2026**. Portal countdown at 19:50 on 25 Sep showed about 2 days 4 hours left, so it ends around **28 Sep, 00:00 IST**. |
-| Submission limit | **5 per day** |
-| Leaderboard | Refreshes every 15 min. Public board uses a subset of test; final rank uses the private board. |
-| Day-1 leaderboard | Ranks 4–11 at **0.984–0.985** (as of 25 Sep evening) |
-| Prizes | Top 50 get PPIs; top 500 at the 48-hour mark get +$100 AWS credits |
-| Rules | No external data, lookups or geocoding APIs. Models must be MIT/Apache-2.0 and ≤8B params. Country is an open set (France appears in test only). |
-| Final package | zip containing `output/` (2 TSVs), `code/business_entity_resolution/` (`src/`, `README.md`, `requirements.txt`), filled-in `Documentation_template.md` |
+| Metric | **Macro F0.5**, computed per S1 entity and then averaged. Singletons: an empty prediction scores 1.0, any predicted match scores 0.0. Precision weighs 2× recall. |
+| Scored file | `matching_results.tsv` (tab-separated, one row per test S1, comma-joined IDs, empty when no matches). Uploaded on the portal. |
+| Also required | `candidate_pairs.tsv`: **exactly** the candidate set the final model scored (the last filtering stage). Final matches must be a subset. |
+| **Rule update (26 Sep)** | Candidate generation counts toward the final ranking: **a smaller candidate set per S1 ranks higher**, reviewed together with the code, beyond the leaderboard. |
+| Validator | `student_resource/utils/validate_submission.py --matching ... --candidate ... --test-dir dataset/test` (stdlib only, ~5 min). |
+| Deadline | **28 Sep 2026, 00:00 IST** (72-hour hackathon, 25–27 Sep). |
+| Submission limit | **5 per day** (resets at midnight). |
+| Leaderboard | Public = subset of test, refreshes ~15 min; final rank = private board. Day-1 top ranks were ~0.984–0.985. |
+| Prizes | Top 50 get PPIs; top 500 at the 48-hour mark get +$100 AWS credits. |
+| Rules | No external data / lookups / geocoding APIs. Models must be **MIT/Apache-2.0 and ≤ 8B params** (we use multilingual-e5-small = MIT, XGBoost = Apache-2.0, LightGBM = MIT). Country is an open set (France appears in test only; don't hard-code {US, India}). |
+| Final package | zip: `output/` (2 TSVs), `code/business_entity_resolution/` (`src/`, `README.md`, `requirements.txt`), filled-in `Documentation_template.md`. |
+| Team | "Linear_depression" (Mohammad Hifzaan Ansari + 3). |
 
-## 2. Compute setup
+## 2. Status right now (27 Sep ~00:40 IST)
 
-- **All development runs on the laptop:** 16 threads, 13 GB RAM, no NVIDIA GPU.
-- **Run heavy steps one at a time.** Running two in parallel caused out-of-memory crashes (segfault, "bad allocation").
-- Memory lessons: tokenise S1 in 300k chunks in `block.py`. In `features.py`, load only candidate records, use 1M-pair chunks spilled to disk, and avoid polars list set-ops (they cost ~1 GB per 500k pairs, so they were removed).
-- **Disk:** C: had 0 bytes free at 00:30 on 26 Sep. Feature parts are no longer merged into one file (train/predict read `*_feat_parts/` directly). About 5 GB free after cleanup.
-- Test timings: blocking ~15 min (resumable, auto-retry after a crash); features 98M pairs ~17 min; **predict 68 min** (a 1500-tree, 127-leaf model is slow; use fewer or smaller trees next time); validator 5 min.
-- Timings on the laptop: prep 7 min; blocking of the train 25% sample 5 min; train features (25M pairs) 9 min; LightGBM 2-fold ~35 min (1500 rounds, still improving).
-- AWS: account `hazel.mayank`, bucket `s3://amlc26-hazel.mayank` (us-east-1), dataset zip uploaded. Every SageMaker quota on this new account is 0 (domains, `ml.m5.2xlarge` notebook), so SageMaker is blocked. Quota requests are pending. `ml.t3.medium` notebook (free tier) is the only likely option and is weaker than the laptop.
-- GPU options if needed later: Kaggle/Colab free T4, or a teammate's older AWS account.
-- Python env: `.venv/` in the workspace root. Pinned in `code/business_entity_resolution/requirements.txt`.
+- **v4 is running on Kaggle** in the interactive session of `notebook9cc53584ee`, one cell, started ~00:10, expected done **~04:15**. It runs the whole pipeline with the new normalisation: prep → block → embed → prune → features → train (XGBoost GPU) → test block → embed → prune → features → predict → validator.
+  - Work dir `/tmp/v4` (lost when the session stops), outputs `/kaggle/working/output_v4/{matching_results,candidate_pairs}.tsv`, logs `/tmp/v4/logs/*.log`.
+  - **The Kaggle session hard-stops ~07:00 IST** (12 h max; it started ~19:00). Download the outputs before then.
+  - The laptop that drives it must stay awake with the tab open (sleep disabled). If the browser display freezes, the kernel keeps running; a new cell simply queues.
+- **Check-ins:** after `prune.py train` (~01:30) → `print(open('/tmp/v4/logs/prune_train.log').read()[-3000:])`; after train → `.../train_1.0.log`; at the end → `validate.log`.
+- **Next action when it finishes:** if validator = PASS → download `output_v4/matching_results.tsv` + `candidate_pairs.tsv` → upload `matching_results.tsv` to the portal = **submission #2** → log LB vs CV in §6 → stop the session (⏻) to save GPU quota.
+- **If it crashed:** read the traceback; steps are resumable (see §5 "Resumability"), fix the code locally, push, `exec(CELLS[0], globals())` (git pull) in the notebook, rerun from the failed step.
+- **GPU quota:** 30 h/week free. ~5.3 h used before v4, ~9.5 h after v4 → ~20 h left for 27 Sep (enough for 2–3 more full runs).
 
-### 2a. Kaggle (from 26 Sep evening): the main compute
-- SageMaker dropped. Code lives in GitHub **hazelmayank/ml-challenge** (public, branch `main`), pushed from this folder. An allow-list `.gitignore` keeps data, work, output, `.venv` and the tarball out.
-- Runner: `kaggle/kaggle_runner.ipynb` (clone/pull → deps + LightGBM GPU check → 2% smoke test in `work_smoke/` → full train → test → validator → artifacts tagged with the commit).
-- Kaggle gives ~30 GB RAM but only ~4 CPU cores, and `/kaggle/working` holds ~20 GB. The pipeline is CPU-bound; a GPU only helps LightGBM, and only if the runner's check passes.
-- v2 train OOM fixed: features are cast to float32 in polars before `to_numpy`. v2 has not been trained yet.
-- Feature speed is ~12 s per 250k pairs on the laptop. The 8 h in `feat_train_v2.log` was a stall, not compute.
-- `block.py` / `features.py` resume from existing parts, so after changing code, delete the parts folders (`fresh()` in the runner).
+## 3. Compute & tooling
 
-## 3. Data facts (from `reports/step1_inspection.json`)
+### Kaggle (main compute since 26 Sep evening)
+- T4 ×2 (15 GB each), ~30 GB RAM, **only 4 CPU cores**, `/kaggle/working` ≈ 20 GB (persisted only in saved versions), `/tmp` ≈ 1 TB free (lost at session end). **Put work dirs in `/tmp`**, only final outputs in `/kaggle/working`.
+- Session max **12 h**; the GPU quota counts the whole time a GPU session is open, even idle.
+- The notebook bootstraps from the repo: `kaggle/kaggle_runner.ipynb` code cells are loaded and exec'd:
+  ```python
+  RUNNER = json.load(open('/kaggle/working/ml-challenge/kaggle/kaggle_runner.ipynb'))
+  CELLS = [c['source'] for c in RUNNER['cells'] if c['cell_type'] == 'code']
+  for src in CELLS[:4]: exec(src, globals())   # 0 clone/pull, 1 paths (auto-detect data), 2 pip + GPU check, 3 helpers
+  ```
+  Helpers: `step(script, *args)` (subprocess, streams + logs to `$BER_WORK/logs/`, records the commit), `fresh(*folders)` (delete), `set_paths(work, output)`, `disk()`, `seed_indic()` (copies the learned Indic dictionary into the work dir). `exec(CELLS[0], globals())` alone = `git pull`.
+- Pinned pip install shows dependency-conflict warnings for unrelated preinstalled packages (jax, opencv…): harmless, steps run in subprocesses.
+- GPU checks done: LightGBM `gpu` (OpenCL) works but was slower on small data; `cuda` build absent. **XGBoost `device=cuda` works and is ~8× faster than LightGBM on 4 CPU cores** (5 min vs ~40 min per fold on 46.6M pairs). e5 encoding ≈ **6,000–6,500 texts/s** on 2 T4s (DataParallel, fp16).
+
+### GitHub
+- Repo `hazelmayank/ml-challenge` (public). The laptop folder `Downloads/6ab10eb3b23ba_student_resource/` **is** the working tree; an allow-list `.gitignore` keeps data, work, output, `.venv`, the tarball and the PDF out. Only `.gitignore`, `context.md`, `kaggle/`, `code/`, `student_resource/utils/`, `student_resource/Documentation_template.md` are tracked.
+- Commit messages end with a `Co-Authored-By: Claude` line.
+
+### Old laptop (still usable for analysis)
+- 16 threads, 13 GB RAM, no NVIDIA GPU, C: nearly full (~3 GB free). `.venv` has CPU torch + transformers + xgboost for local tests.
+- Local mini test set for plumbing tests lived in the Claude scratchpad (not needed).
+
+### Gotchas we hit (avoid repeating)
+- **Laptop sleep** froze the Kaggle display (kernel kept running). Power setting "sleep when plugged in = Never" is now set.
+- **Pasting huge cell output** (HF "Loading weights" progress bars) truncated at 50k chars → read logs with `open(log).read()[-N:]` instead. HF progress bars are now silenced in `embed.py`.
+- **Kaggle runs one cell at a time.** A new cell shows a spinner while the previous one is still running; don't press stop on it (stop interrupts whatever is running). Cancelling a cell does **not** kill a `step()` subprocess → `pkill -f "python -u train.py"`.
+- **Stale resumable parts** would silently be reused: now fingerprinted (see §5).
+- In Git Bash heredocs on the laptop, `\\` collapses to `\` (turned `\b` into a backspace once). Build backslashes with `chr(92)` or use the Edit tool.
+- AWS SageMaker quotas were 0 on the new account → abandoned (bucket `s3://amlc26-hazel.mayank` has the dataset zip; not used).
+
+## 4. Data facts
 
 | File | Rows |
 |---|---:|
@@ -53,167 +84,137 @@ This file is the single source of truth for the team: what the problem is, what 
 | train_ground_truth | 2,206,821 (7,638,365 true pairs) |
 | test_source1 | 1,732,544 (US 663k, India 810k, **France 259k**) |
 | test_source2 | 4,887,273 |
-| test_source3 | 5,082,316 |
+| test_source3 | 5,082,316 (test S2+S3 France: 1.43M) |
 
 **Key findings the pipeline relies on:**
-1. **Each S2/S3 record belongs to at most one S1** (max = 1 over all 7.6M links). So we solve it in reverse: for each S2/S3 record, pick its best S1 and accept only if confident.
-2. **Matched pairs always share the same country** (100%), so we block within country. France is handled automatically because country is just a string.
-3. About **26% of S2/S3 records match no S1** (distractors), so the model must be able to say "no match".
-4. Singletons are 5.6% of S1. Matches per S1 range from 0 to 11 (mean 3.67 when there is at least one).
-5. S1 is clean Latin text with no empty fields. S2/S3 contain about 470k Indic-script names (Devanagari/Tamil/Telugu/Kannada…), about 300k accented names, about 3.4% empty addresses, and `null`/`<NULL>` inside addresses.
-6. The data is **synthetic** with templated noise:
-   - typos (`Power`→`Ponr`)
-   - junk (`>>`, `[Inc]`, `***`, `[[LLC]]`, phone numbers)
-   - filler words (`Center`, `Services`, `Partners`)
-   - shuffled word order
-   - `name.com` domains
-   - random aliases sharing the same address (`Solkeloquo`, `X D.B.A. Y`)
-   - address variants (`MO`/`Missouri`, `Ave`/`Avenue`, `10th`/`Tenth`, `45ND`, uppercase, reordered parts)
+1. **Each S2/S3 record belongs to at most one S1** (max = 1 over all 7.6M links). So we solve it in reverse: for each S2/S3 record, pick its best S1 and accept it only if confident.
+2. **Matched pairs always share the same country** (100%), so everything is done within country (country is just a string, so France works automatically).
+3. ~**26% of S2/S3 records match no S1**. They are deliberate **decoys**: near-copies of a real S1 with one detail changed (house/unit number `2405`→`12405`, legal form `Pvt Ltd`→`LLP`, credential `MD`→`DMD`, one name word). True matches carry benign noise (`1479` for `14793`, dropped suffixes). Exact-difference features tell them apart.
+4. Singletons are 5.6% of S1. Matches per S1: 0–11 (mean 3.67 when ≥ 1).
+5. S1 is clean Latin text. S2/S3 have ~470k Indic-script names, accents, ~3.4% empty addresses, `null`/`<NULL>`.
+6. **Synthetic, templated noise:** typos, junk (`>>`, `[Inc]`, phone numbers, `(ID: 34016)`), injected filler words, shuffled word order, `name.com` domains, aliases (`X D.B.A. Y`, `formerly`, `aka`), address variants (abbreviations, state names/codes, ordinals, reordered parts).
+7. **Injected-noise discovery method (26 Sep night):** words far more frequent in S2/S3 than in S1 (per country) are injected noise or unhandled formats. Findings:
+   - **India:** state names in Indic script inside addresses (`महाराष्ट्र` 457k, `दिल्ली` 288k, … 16 states, ~2M fields), garbled by transliteration to `mhaaraassttr`. Name prefixes `M/s`, `Smt`, `Shri`, `Dr`, fillers `Overseas`, `Infratech`.
+   - **US:** qualifiers `Midtown/Northside/Eastgate/Greater/Southside/Riverside/Westgate/Lakeside`, `formerly`, `(ID: n)`, `PMB`/`CDP` in addresses.
+   - **France (test only):** `R.` for rue in **25%** of S2/S3 addresses, departments (`Gironde`, `Nord`, `Loire-Atlantique`, `Pas-de-Calais`) instead of S1's regions in ~30%, `N°`, `Ch.`, `Crs`, `Q.`, `All.`; injected name words `Participations`, `Holding`, `SNC`, `Distribution`, `International`, `Associés`, `Développement`, `Groupe`, `Et`. French cities: Lille/Roubaix/Tourcoing/Dunkerque/Calais, Bordeaux/Mérignac/Pessac/La Teste/Lège-Cap-Ferret, Nantes/Saint-Nazaire/Pornic/La Baule.
+8. **Indic name dictionary** (`learn_indic.py`, artifact `code/business_entity_resolution/artifacts/indic_dict.json`): 1,347 word mappings from 551k aligned train pairs, covering 96.4% of test Indic name words.
 
-7. **Unlinked S2/S3 records are deliberate decoys:** near-copies of a real S1 with one detail changed: the house/unit number (`2405` vs `12405`, `T-24/309` vs `T-24/302`), the legal form (`Private` → `Public Limited`, `Pvt Ltd` → `LLP`), a credential (`MD` vs `DMD`), or a name word (`Sanchez` → `Shah`, `Services` → `Value`). True matches carry their own benign noise (`1479` for `14793`, `1056c` for `1056`, dropped suffixes). Exact-difference features are needed to tell the two apart.
-8. **v1 OOF error breakdown** (1.9M linked sample records + 670k unlinked):
-   - blocking misses 61.5k (23k Indic names, 21k missing address, 18k other)
-   - low confidence 22k
-   - wrong top S1 15k (12k missing address)
-   - **decoys wrongly matched 29.8k (4.4% of unlinked)**
-9. **Indic dictionary** (`learn_indic.py`): 1,347 word mappings learned from 551k aligned train pairs, covering 97.8% of train and **96.4% of test** Indic name words (`एसएस फूड प्राइवेट लिमिटेड` → `ss food private limited`).
+## 5. Pipeline v4 (`code/business_entity_resolution/src/`)
 
-## 4. Pipeline (`code/business_entity_resolution/src/`)
+```text
+prep → block → embed (GPU) → prune (GPU) → features → train (GPU) │ test: prep → block → embed → prune → features → predict → validator
+```
 
-| Step | Script | What it does | Status |
-|---|---|---|---|
-| 0 | `step1_inspect.py` | Data inspection report | Done |
-| 1 | `normalize.py` | Lowercase, unidecode, junk removal, legal-suffix stripping (`name_core`), `name_compact` (for domains), address abbreviation/state/ordinal canonicalisation, `addr_nums` | Done |
-| 2 | `prep.py` | TSV → cleaned parquet in `work/` (22M records in about 7 min) | Done |
-| 3 | `block.py` | IDF-weighted token blocking within country. Tokens: name words, address words, compact name, **name-word pairs, address-word pairs, name-word × address-number**. Tokens with S1 frequency >150 are dropped. Keeps the top 10 S1 per S2/S3 record. | Done; test run in progress |
-| 4 | `features.py` | About 25 features: rapidfuzz ratio / token_set / token_sort / partial / Jaro-Winkler on name_norm, name_core, name_compact, addr_norm, addr_nums; house-number equality; word overlap; lengths; flags (indic, domain, addr_missing, src); blocking score, rank, gap | In progress |
-| 5 | `train.py` | LightGBM, 2-fold CV grouped by S1, on a **25% S1 sample** (all of those businesses' S2/S3 records plus 25% of unlinked ones). Assign each S2/S3 record to its argmax S1 if p > t, with t tuned on OOF macro F0.5. | In progress |
-| 6 | `predict.py` | Score test pairs, write both output TSVs | Pending |
-| — | `metric.py` | Exact official macro-F0.5 scorer | Done |
-
-## 5. Results log
-
-| Date / time | Experiment | Metric |
+| Step | Script | What it does |
 |---|---|---|
-| 25 Sep 21:00 | Blocking v1: single tokens, df ≤ 150 | recall@10 = **0.769** |
-| 25 Sep 21:15 | Blocking v2: + word pairs + name × number tokens | recall@10 = **0.968**, recall@1 = 0.923, 9.9 candidates per record |
-| 25 Sep ~23:15 | Blocking ceiling (perfect matcher on v2 candidates) | **0.98785** |
-| 25 Sep ~23:15 | LightGBM v1: 23 features, 2-fold OOF, argmax + threshold t=0.30 | **CV 0.97638** (pair P 0.994, R 0.948, singletons 0.977) |
-| 26 Sep ~01:00 | Test run v1: 98.4M candidate pairs → 5.91M matches; validator **PASS**. Per country: France 4.5% empty, 3.56 matches per S1; India 5.8% / 3.35; US 5.4% / 3.44 | ready to submit |
-| 26 Sep 22:31 | **Submission #1 (v1) public LB** (validator re-run: PASS) | **0.945857** vs CV 0.97638: gap 0.030 |
-| 26 Sep ~19:30 | **Kaggle smoke test** (v2, 2% sample, commit a04a46e): recall@10 0.9758, ceiling 0.99192 | **CV 0.98626** at t=0.20 (grid edge → grid now starts at 0.05) |
-| 26 Sep ~20:00 | Kaggle v2 25% blocking: recall@10 **0.9768**; features ~6 s per 250k pairs (2× laptop) | full train running |
-| 26 Sep ~20:30 | **Blocking-miss analysis** (v2, 25%): 36.0k of 1.90M links missed (1.9%). Address missing 14.4k (**18.6% miss rate** for no-address records), both fields similar but typo'd 7.5k, Indic not in dictionary 5.7k (4.2%), address ok + domain/alias name 4.5k, name ok + address variant 2.6k, both differ 1.4k. India 3.1% vs US 1.1%. | → `embed.py` |
-| 26 Sep ~20:15 | **v2 on Kaggle, 25% sample** (commit 2019045): blocking recall@10 0.9768 | **CV 0.98386** at t=0.30 (final refit interrupted, so no v2 model saved) |
-| 26 Sep ~20:30 | **Embedding probe** (first 300k sampled S2/S3, T4×2 at ~6k texts/s): recall block 0.9794 → **union 0.9904** (misses −53%). Indic 0.960 → 0.991, has address 0.989 → 0.998, **no address 0.764 → 0.829** (still weakest), India 0.973 → 0.989, US 0.984 → 0.992. Pairs per record ~9.9 → ~18 | full train with embeddings next |
-| 26 Sep ~23:50 | **Data-driven normalisation v4** (words far more frequent in S2/S3 than S1 = injected noise / unhandled formats, per country; France measured on test). Fixes: 16 Indic-script state names in addresses (~2M fields, were "mhaaraassttr"), France `R.`→rue (25% of FR S2/S3), departments→regions (~30%), `N°`/Ch./Crs/Q./All., French elision, per-country filler words (FR: participations/holding/snc/…; US: midtown/riverside/…/formerly; IN: m/s, overseas, infratech), `(ID: n)`, PMB/CDP, mojibake. A/B on 300k labelled train pairs: India address sim 92.27→94.14, 10.7% of true pairs improved >5 pts, 0% worse; India exact name_core 68.5→69.6%; US small gain. `embed.py` now caches embeddings (raw text unchanged by normalisation) | needs full rerun (v4) |
-| 26 Sep ~23:10 | **Embeddings + XGBoost (CUDA)** on the old 25% sample (46.6M pairs, 42 features): folds 5 min each on T4 (LightGBM CPU ~40 min); ceiling 0.9969; still improving at 800 rounds → xgb max 2000 | **CV 0.98785** at t=0.35 (vs 0.98386 without embeddings, same sample → **+0.004**) |
-| 26 Sep ~22:45 | **CV–LB gap diagnosed:** the 25% sample kept all S2/S3 records of sampled S1s but only 25% of unlinked decoys (4× fewer decoys per S1 than test) and none of the other S1s' records (test has blocking-missed records attaching to wrong S1s). CV was optimistic and t chosen too low. Fix: train/evaluate on **all** train S2/S3 records (`train.py 1.0`), made affordable by `prune.py`. France (15% of test) is still unmeasurable. | — |
-| 26 Sep ~22:45 | **Rule update from organisers:** a smaller candidate set per S1 ranks higher in the final evaluation, and `candidate_pairs.tsv` = exactly what the final model scores. v1 ≈ 57 candidates per S1. → `prune.py` (stage-1 model, top-K per record + p_min), `model.py` (XGBoost CUDA / LightGBM) | — |
-| 26 Sep ~21:00 | **`embed.py` (GPU)**: multilingual-e5-small name+address embeddings, per-country top-10 kNN added as candidates + `emb_sim`/`emb_gap`/`erank` features. Tested locally on CPU (mini data); Kaggle probe pending | _probe pending_ |
-| 26 Sep ~01:45 | **v2 started.** Changes: Indic dictionary; `legal`/`addr_ids`/`hnum` fields; 9 difference features (legal_rel, hnum_rel, hnum_lev, ids extra counts, unmatched name words, first-word similarity) + addr_ids similarities; empty fields read as ""; French street words; LightGBM 63 leaves, ≤800 rounds. v1 model archived in `work/v1/`. | _running_ |
+| 1 | `normalize.py` + `prep.py` | TSV → cleaned parquet. Lowercase, transliterate (Indic names via dictionary, Indic state names in addresses via a fixed map), junk removal, legal suffixes → `legal`, generic + **per-country filler words** removed → `name_core`, `name_compact`, address abbreviations/states/ordinals (+ France-only street abbreviations and department→region) → `addr_norm`, `addr_nums`, `addr_ids`, `hnum`. ~7 min for train+test on Kaggle. |
+| 2 | `block.py` | IDF-weighted token blocking within country (name words, address words, compact name, name-word pairs, address-word pairs, name word × house number; S1 df cap 150). Top 10 S1 per S2/S3 record. `--sample f` = legacy 25% sample (biased, don't use for CV). |
+| 3 | `embed.py` (GPU) | multilingual-e5-small (MIT) embeddings of raw `"query: name \| address"`; per-country top-10 kNN S1 per S2/S3 record added to the candidates; `emb_sim`, `emb_gap`, `erank` for every pair. Embeddings cached in `$BER_WORK/emb_cache/` (raw text doesn't change with normalisation). `--probe N` = recall report only. |
+| 4 | `prune.py` (GPU via XGBoost) | **Stage-1 model** on cheap scores (bscore, n_shared, brank, bscore_rel/gap, emb_sim/gap, erank), out-of-fold on train (two halves). Keeps each record's top-K candidates with p1 ≥ p_min; K/p_min auto-chosen as the smallest set within **0.2%** recall of the unpruned candidates (`BER_PRUNE="K,p_min"` overrides). Saves `prune.json` + `prune.xgb.ubj` for test. `p1`, `p1rank` become stage-2 features. **This pruned set is what `candidate_pairs.tsv` reports.** |
+| 5 | `features.py` | ~47 features: RapidFuzz ratio/token_set/token_sort/partial/JW on names/addresses, house-number & legal-form difference detectors, unmatched name words, blocking + embedding + stage-1 scores, flags. Process pool sized to the CPUs. |
+| 6 | `train.py` + `model.py` | `BER_MODEL=xgb` (XGBoost `device=cuda`, lossguide 63 leaves, lr 0.1, ≤ 2000 rounds, early stop 50) or `lgb` (LightGBM CPU, ≤ 800). 2-fold CV grouped by true S1. `train.py 1.0` = **all train records** (honest decoy density). Decision: each S2/S3 → its argmax S1 if p > t; t grid 0.05–0.95 tuned on OOF macro F0.5. Saves `model.*`, `decision.json` (threshold, cv, backend, feature list), `oof.parquet`. |
+| 7 | `predict.py` | Loads the backend named in `decision.json`, scores test feature parts, writes `matching_results.tsv` and `candidate_pairs.tsv` (+ `test_scored.parquet`). |
+| — | `metric.py` | Exact official macro F0.5 (per S1, singletons included). |
+| — | `learn_indic.py`, `step1_inspect.py` | Indic dictionary learning; data inspection report. |
 
-## 6. Plan / roadmap
+**Environment variables:** `BER_DATA` (folder with `train/`, `test/`), `BER_WORK`, `BER_OUTPUT`, `BER_MODEL` (`xgb`/`lgb`), `BER_EMB` (`0` = run without embeddings/pruning features), `BER_EMB_K`, `BER_EMB_MODEL`, `BER_PRUNE`, `BER_LGB_DEVICE`.
 
-**Phase 1 (tonight): first valid submission**
-- [x] Inspect data, clean, block
-- [x] Features, LightGBM CV score, tuned threshold (CV 0.9764, t=0.30)
-- [x] Test predictions, run the validator (PASS) → `output/matching_results.tsv` ready as **Submission #1**
+**Resumability:** block/embed/features write parts per chunk and skip existing parts on rerun. Parts folders carry an `input_fingerprint.txt`; if the input changed they are wiped automatically (`config.parts_dir`). `embed.py` keeps the blocking-only file as `*_block.parquet`, `prune.py` keeps the unpruned one as `*_union.parquet`, so each step can be rerun alone.
 
-**Phase 2 (26 Sep): climb to 0.97+**
-- [ ] Analyse blocking misses (3.2%) and raise recall above 99%: TF-IDF char n-gram kNN, larger top-K, tuned df cap
-- [ ] **Indic → Latin word dictionary learned from training pairs** (e.g. `प्राइवेट`→`private`); the current unidecode output is poor (`eses phuudd`)
-- [ ] S1-side context features computed on the full candidate graph (competition between S2/S3 records for the same S1)
-- [ ] Error analysis loop on OOF false positives and false negatives
-- [ ] Be in the top 500 at the 48-hour mark (about 27 Sep evening)
+## 6. Results log (chronological)
 
-**Phase 3 (27 Sep): top-50 push (0.98+)**
-- [ ] France-specific normalisation (accents, `rue`, `bis`, `SARL/SAS`)
-- [ ] Threshold and singleton tuning, possibly per-source thresholds
-- [ ] Optional: multilingual embeddings (`intfloat/multilingual-e5-small`, MIT) if a GPU is available
+| When (IST) | Experiment | Result |
+|---|---|---|
+| 25 Sep 21:00 | Blocking v1: single tokens, df ≤ 150 | recall@10 0.769 |
+| 25 Sep 21:15 | Blocking v2: + word pairs + name × number tokens | recall@10 0.968, 9.9 candidates/record |
+| 25 Sep ~23:15 | LightGBM v1: 23 features, 25% sample, t=0.30 | CV 0.97638 (biased sample) |
+| 26 Sep ~01:00 | v1 test run: 98.4M candidate pairs (~57 per S1) → 5.91M matches, validator PASS | — |
+| 26 Sep ~19:30 | Kaggle smoke test (v2, 2% sample) | CV 0.98626 (noisy) |
+| 26 Sep ~20:15 | v2 on Kaggle (Indic dictionary, difference features), 25% sample, LightGBM | recall@10 0.9768, **CV 0.98386** at t=0.30 |
+| 26 Sep ~20:30 | Blocking-miss analysis (v2): 36.0k of 1.90M links missed (1.9%): address missing 14.4k (18.6% miss rate), typos in both fields 7.5k, Indic not in dictionary 5.7k, domain/alias names 4.5k, address variants 2.6k, both differ 1.4k. India 3.1% vs US 1.1% | → embeddings |
+| 26 Sep ~20:30 | Embedding probe (300k records): recall 0.9794 → **0.9904**; Indic 0.960 → 0.991, has address 0.989 → 0.998, no address 0.764 → 0.829 | kept |
+| 26 Sep ~22:10 | Embeddings on the full 25% sample: recall@10 0.9768 → **0.9898**, 18.07 candidates/record | — |
+| 26 Sep 22:31 | **Submission #1 (v1) → public LB 0.945857** vs CV 0.97638: **gap 0.030** | — |
+| 26 Sep ~22:45 | **Gap diagnosed:** the 25% sample kept only 25% of decoys (4× fewer per S1 than test) and none of the other S1s' records, so CV was optimistic and t too low. Fix: `train.py 1.0` on all records + `prune.py`. France (15% of test) still unmeasurable | → v3/v4 |
+| 26 Sep ~23:10 | Embeddings + **XGBoost CUDA**, 25% sample (46.6M pairs, 42 features): folds 5 min each; ceiling 0.9969; still improving at 800 rounds | **CV 0.98785** at t=0.35 (+0.004 vs 0.98386, same sample) |
+| 26 Sep ~23:50 | **Normalisation v4** (data-driven, §4.7). A/B on 300k labelled train pairs: India address similarity 92.3 → 94.1, 10.7% of true pairs improved > 5 points, 0% worse; India exact name_core 68.5 → 69.6%; US small gain | in v4 run |
+| 27 Sep ~00:10 | **v4 full run started** (commit 1d7f68c): new normalisation + all train records + embeddings + pruning + XGBoost | _running, ~04:15_ |
 
-**Phase 4 (last ~6 h): package**
-- [ ] Final run, validator PASS, `README.md`, fill in `Documentation_template.md`, zip
+Top features (XGBoost, 25% sample): `bscore_gap`, `emb_gap`, `brank`, `ids_a_extra_fuzzy`, `bscore_rel`, `addr_ids_tset`, `addr_norm_tset`, `name_norm_tsort`, `name_a_extra`, `hnum_rel`.
 
-## 6a. Detailed implementation plan (how each step is and will be built)
+**CV comparability warning:** scores from `train.py 0.25` (old sample) and `train.py 1.0` (all records) are **not** comparable; the full-data CV will be lower and closer to the leaderboard. Compare runs only within the same mode.
 
-### Working rules (apply to every step)
-1. **One change → one measurement.** Every idea is judged by the OOF macro F0.5 from `train.py` on the fixed 25% S1 sample. It is kept only if the score goes up.
-2. **Blocking recall is tracked separately** (`block.py` prints recall@k). The "blocking ceiling" line in `train.py` is the best score possible with the current candidates.
-3. **Heavy steps run sequentially** on the laptop (RAM limit). Development happens on the 25% train sample; test always runs in full.
-4. **Submissions (5 per day):** submit only when the CV score has improved by at least ~0.002, or to check that CV matches the leaderboard. The CV-vs-leaderboard gap is logged in §5 every time.
-5. `context.md` is updated after every milestone.
+## 7. What was built when (commits, oldest → newest)
 
-### Step A: Submission #1 (tonight, in progress)
-- **How:** `features.py` computes ~25 similarity features per candidate pair → `train.py` trains LightGBM with 2 folds grouped by S1 (a business never appears in both folds) → OOF probabilities → each S2/S3 record goes to its highest-probability S1 if p > t → t is searched over 0.20–0.95 to maximise macro F0.5 → the final model is retrained on the whole sample → `predict.py` scores ~100M test pairs in 5M chunks and writes both TSVs → validator → upload.
-- **Expected:** CV ≈ 0.90–0.95 (limited by 96.8% blocking recall and weak Indic handling).
+`3fc961d` pipeline + Kaggle runner (float32 OOM fix) → `2019045` threshold grid from 0.05 → `2fa0e37` `embed.py` + fingerprinted parts → `3054739` quiet HF logs → `8e9c8ce` `model.py` (XGBoost CUDA backend) → `5d2177d` `prune.py` + full-train mode → `daa5e2e` xgb ≤ 2000 rounds → `1d7f68c` normalisation v4 + embedding cache. (`git log` has details.)
 
-### Step B: Fix blocking misses, 96.8% → 99%+ recall (26 Sep morning)
-- **How:**
-  1. Dump a sample of missed true pairs and group them by cause (Indic name, alias name, missing address, common words).
-  2. **Raise the df cap only for pair tokens** (pairs are rarer, so a cap of 150 → ~500 is affordable), and increase TOP_K from 10 to 15–20.
-  3. Add **character 3-gram tokens of `name_compact`**, restricted to rare n-grams, so heavy typos still share tokens (`etrepndiels` ~ `enterprises`).
-  4. Add a **phonetic/consonant skeleton** token for names (drop vowels: `payne enterprises` → `pyn ntrprss`), which survives most typos.
-- **Check:** recall@TOP_K on the sample goes up while candidates per record stay ≤ 20 (to keep runtime/memory OK).
+## 8. Plan to the deadline (27 Sep)
 
-### Step C: Indic-script names (26 Sep)
-- **Problem:** ~5% of S2/S3 names are in Devanagari/Tamil/Telugu/Kannada etc. unidecode gives `eses phuudd praaivett`, which doesn't match `ss food private`.
-- **How:** learn a **word translation table from the training pairs**. For every true pair where the S2/S3 name is Indic and the S1 name is Latin with the same number of words, align words by position and count the (Indic word → Latin word) co-occurrences. Keep mappings with high agreement (e.g. `प्राइवेट`→`private`, `लिमिटेड`→`limited`, `राज`→`raj`). In `normalize.py`, translate Indic names word by word with this table and fall back to unidecode for unknown words. Addresses (Indic state names such as `उत्तर प्रदेश`) are handled the same way.
-- **Rule check:** this uses only the provided training data, so it's allowed.
-- **Check:** recall and F0.5 on the `indic` slice of OOF before and after.
-
-### Step D: Better features (26 Sep afternoon)
-- **Context features on the full candidate graph:** for each S1, how many S2/S3 records have it as their top choice, and this record's rank among them. They'll be computed from the full-train run (or test) so train and test distributions match.
-- **Rare-word agreement:** IDF-weighted share of the S1 name's rarest word that also appears in the candidate.
-- **Address components:** zip/PIN match, street-name match without the number, city match.
-- **Alias flags:** `aka` / `d.b.a.` present, `name_compact` found inside the other name.
-- **Check:** feature importance plus OOF delta; drop features that don't help.
-
-### Step E: Error analysis loop (26 Sep evening → 27 Sep)
-- **How:** sort OOF errors into false positives (wrong merges, costly under F0.5) and false negatives. Read 50 of each and write a rule or feature for the biggest group. Repeat 3–4 times.
-- Also check the score by country (US vs India) and by source (S2 vs S3) to find weak slices.
-
-### Step F: Decision tuning (27 Sep)
-- Separate thresholds per source (S2/S3) and per script (Latin/Indic), tuned on OOF.
-- **Second-best rule:** if the top two S1 candidates are almost tied, abstain (protects precision).
-- **Singleton protection:** an S1 whose best incoming probability is low gets no matches.
-
-### Step G: France readiness (27 Sep)
-- Training has no French data, so this is rule-based: accents are stripped by unidecode; add French street words (`rue`, `avenue`, `boulevard`/`bd`, `chemin`, `allee`, `place`, `bis`/`ter`), legal forms (`sarl`, `sas`, `sasu`, `eurl`, `sa`, `sci`) and region names to `normalize.py`.
-- **Check:** print ~50 French test candidates with their scores and confirm by eye that matches look right. No labels exist for France, so a manual look is the only check.
-
-### Step H: Optional GPU boost (only if time and GPU allow)
-- Multilingual sentence embeddings (`intfloat/multilingual-e5-small`, MIT) for names, used as one extra cosine-similarity feature and for extra kNN candidates on Indic names. Only on Kaggle/Colab or AWS, and only if Steps B–F are done.
-
-### Step I: Final packaging (last ~6 h before 28 Sep 00:00)
-- Freeze the best configuration → full test run → validator PASS → final upload.
-- Write `code/business_entity_resolution/README.md` with the exact run order (§7).
-- Fill in `Documentation_template.md` (method, blocking, features, model, results).
-- Build the zip in the required layout. **No new ideas in the last 6 hours.**
+### Working rules
+1. **One change → one measurement**, always in full-data mode (`train.py 1.0`) so CV tracks the leaderboard.
+2. Log every run in §6 with the commit; log CV **and** LB for every submission to track the gap.
+3. **Submissions (5 today):** submit when full-data CV improves by ≥ ~0.002, or to measure the CV–LB gap.
+4. Keep the candidate set small (the organisers' rule): report candidates per S1 for every test run.
+5. **Freeze at 18:00 IST. No new ideas in the last 6 hours.**
 
 ### Timeline (IST)
-| When | Target |
-|---|---|
-| 25 Sep night | Step A → Submission #1 |
-| 26 Sep morning | Step B (recall 99%+) → Submission #2 |
-| 26 Sep afternoon | Steps C + D → Submission #3 |
-| 26 Sep night | Step E, first round |
-| 27 Sep morning–afternoon | Steps E + F + G → Submissions #4–6; in the top 500 by the 48-hour mark |
-| 27 Sep evening | Final improvements, then freeze by ~18:00 |
-| 27 Sep 18:00–24:00 | Step I (package and final submission) |
 
-## 7. How to run (from `code/business_entity_resolution/src`, using the `.venv` Python)
+| When | What | Output |
+|---|---|---|
+| ~04:15 | v4 finishes → validator → **submission #2** → stop session | LB v4, CV v4, candidates/S1 |
+| Morning (~09:00–10:00) | Read v4 logs: prune table (recall kept vs size), full-data CV per country/source, CV–LB gap. **France check:** sample ~50 French matches and ~50 French rejected top candidates from `test_scored.parquet` and eyeball them (no labels) | decide next steps |
+| 10:00–14:00 | **Improvement round 1** (one Kaggle run, ~2.5 h thanks to the embedding cache if run in one session; ~4 h from scratch) — candidates in priority order below | submission #3 |
+| 14:00–18:00 | Improvement round 2 / ensemble | submissions #4–#5 |
+| 18:00 | **Freeze** the best configuration by full-data CV (and LB) | — |
+| 18:00–22:00 | Final full run (if the best run's outputs aren't already the final ones), validator, final upload | final `output/` |
+| 22:00–23:30 | Package: README (done, check), fill `Documentation_template.md`, pinned requirements, zip, upload | zip |
 
-```bash
-python prep.py train test          # clean -> work/*.parquet
-python block.py train --sample 0.25
-python features.py train_cand_sample
-python train.py 0.25               # prints CV macro F0.5 + best threshold
-python block.py test
-python features.py test_cand
-python predict.py                  # -> output/matching_results.tsv, candidate_pairs.tsv
-python ../../../student_resource/utils/validate_submission.py \
-  --matching ../../../output/matching_results.tsv \
-  --candidate ../../../output/candidate_pairs.tsv \
-  --test-dir ../../../student_resource/dataset/test
+### Improvement candidates (ranked by expected gain / cost)
+1. **Decision tuning on full-data OOF** (cheap, no rerun of features): per-country and per-source thresholds; **near-tie abstain** (if the top-2 S1 probabilities of a record are close, don't match: protects precision); **singleton protection** (an S1 whose best incoming probability is low gets nothing). Implement in `train.py`/`predict.py` as extra fields in `decision.json`.
+2. **LightGBM vs XGBoost vs average** on the same pruned features (pruned data is small, so LightGBM on CPU is affordable now). The winner goes into `decision.json`.
+3. **S1-side context features** on the full candidate graph (now valid because train uses all records): how many S2/S3 records choose this S1 as top-1, this pair's rank among them, S1's candidate count. Helps decoys that compete with the true records for the same S1.
+4. **No-address records** (recall 0.83, the weakest slice): more embedding neighbours on name-only text for `addr_missing` records, or name-only kNN.
+5. **Tuning:** XGBoost depth/leaves/learning rate; `BER_EMB_K`; pruning `MAX_LOSS`.
+6. **France:** after eyeballing, add rules if systematic errors show up (e.g. more department/city synonyms, `Sainte`/`Saint`, legal forms).
+
+### Final package checklist
+- [ ] `output/matching_results.tsv` and `output/candidate_pairs.tsv` from the **same** final run (validator PASS)
+- [ ] `code/business_entity_resolution/src/` = the exact commit that produced them (record the hash)
+- [ ] `README.md` run order (already written for v4; re-check)
+- [ ] `requirements.txt`: pin torch / transformers / xgboost to the Kaggle versions used (`pip freeze | grep -E "torch|transformers|xgboost"` in the notebook)
+- [ ] `Documentation_template.md` filled: methodology, blocking + embeddings + pruning, features, model, decision rule, candidate-set size, results table from §6, compute used, model licenses
+- [ ] Zip layout exactly as in §1; team name in the file name
+
+## 9. How to run
+
+### Kaggle, full pipeline in one cell (what v4 runs)
+Needs: dataset attached, GPU T4 ×2, Internet on. In a fresh session, first bootstrap (`git clone` the repo to `/kaggle/working/ml-challenge`, load `CELLS`, `exec` `CELLS[:4]`, see §3), then:
+```python
+exec(CELLS[0], globals())                            # git pull
+set_paths('/tmp/v4', '/kaggle/working/output_v4')
+seed_indic()
+os.environ['BER_MODEL'] = 'xgb'
+step('prep.py', 'train', 'test')
+step('block.py', 'train');  fresh('train_cand_parts')
+step('embed.py', 'train');  fresh('train_cand_emb_parts')
+step('prune.py', 'train')
+step('features.py', 'train_cand')
+step('train.py', 1.0)
+step('block.py', 'test');   fresh('test_cand_parts')
+step('embed.py', 'test');   fresh('test_cand_emb_parts')
+step('prune.py', 'test')
+step('features.py', 'test_cand')
+step('predict.py')
+step(VALIDATOR, '--matching', '/kaggle/working/output_v4/matching_results.tsv',
+     '--candidate', '/kaggle/working/output_v4/candidate_pairs.tsv', '--test-dir', f'{DATA}/test',
+     log='validate.log')
 ```
+Approximate times: prep 10 min, block train 25, embed train 35 (cached: ~2), prune 10, features 10, train 15, block test 25, embed test 35 (cached: ~2), prune/features/predict ~25, validator 5 → **~4 h from scratch**. For an unattended run, put the bootstrap + this into a single-cell notebook and use **Save Version → Save & Run All**, then download from the version's Output tab.
+
+### Reading logs without huge output
+```python
+print(open('/tmp/v4/logs/train_1.0.log').read()[-3000:])
+```
+
+### Local (small tests only)
+From `code/business_entity_resolution/src/` with `BER_WORK`/`BER_DATA` set; see `code/business_entity_resolution/README.md` for the full order.
