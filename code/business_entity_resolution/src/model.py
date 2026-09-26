@@ -10,7 +10,8 @@ import shutil
 import numpy as np
 
 KIND = os.environ.get("BER_MODEL", "lgb")
-MAX_ROUNDS = 800
+# XGBoost on GPU is ~8x faster, and its validation loss was still falling at 800 rounds
+MAX_ROUNDS = 2000 if KIND == "xgb" else 800
 EARLY_STOP = 50
 
 LGB_PARAMS = dict(objective="binary", learning_rate=0.1, num_leaves=63, min_data_in_leaf=100,
