@@ -32,9 +32,13 @@ This file is the single source of truth for the team: the problem, what has been
 | Final package | zip: `output/` (2 TSVs), `code/business_entity_resolution/` (`src/`, `README.md`, `requirements.txt`), filled-in `Documentation_template.md`. |
 | Team | "Linear_depression" (Mohammad Hifzaan Ansari + 3). |
 
+## 1a. The Kaggle notebook to run: `kaggle/full_pipeline.ipynb`
+Self-contained, top to bottom: config → clone/pull (optionally pin `COMMIT`) → deps + GPU check → prep → train pipeline → test inference → `decide.py` → validator (both outputs) → France review → summary + artifacts. Import it on Kaggle (File → Import Notebook → GitHub URL or upload), set GPU T4 ×2 + Internet On + dataset input, then **Save Version → Save & Run All** (~4.5 h, unattended). Outputs in the version's Output tab: `output/` (tuned, upload this), `output_base/` (plain threshold), `artifacts/` (models, decisions, logs, `summary.json`).
+
 ## 2. Status right now (27 Sep ~00:40 IST)
 
-- **v4 is running on Kaggle** in the interactive session of `notebook9cc53584ee`, one cell, started ~00:10, expected done **~04:15**. It runs the whole pipeline with the new normalisation: prep → block → embed → prune → features → train (XGBoost GPU) → test block → embed → prune → features → predict → validator.
+- **27 Sep ~01:00: the interactive v4 run was stopped by the user; v4 is re-run with `kaggle/full_pipeline.ipynb` via Save & Run All.** (The notes below describe the stopped interactive run.)
+- **v4 was running on Kaggle** in the interactive session of `notebook9cc53584ee`, one cell, started ~00:10, expected done **~04:15**. It runs the whole pipeline with the new normalisation: prep → block → embed → prune → features → train (XGBoost GPU) → test block → embed → prune → features → predict → validator.
   - Work dir `/tmp/v4` (lost when the session stops), outputs `/kaggle/working/output_v4/{matching_results,candidate_pairs}.tsv`, logs `/tmp/v4/logs/*.log`.
   - **The Kaggle session hard-stops ~07:00 IST** (12 h max; it started ~19:00). Download the outputs before then.
   - The laptop that drives it must stay awake with the tab open (sleep disabled). If the browser display freezes, the kernel keeps running; a new cell simply queues.
