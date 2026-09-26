@@ -77,7 +77,7 @@ def main(fraction=0.25):
     ceiling = macro_f05(truth, scored.filter(pl.col("y") == 1).select("s23k", "s1k"), keys)
     print("blocking ceiling:", ceiling)
     best = (0, None)
-    for t in np.arange(0.20, 0.96, 0.05):
+    for t in np.arange(0.05, 0.96, 0.05):
         r = macro_f05(truth, decide(scored, t), keys)
         print(f"t={t:.2f} {r}")
         if r["macro_f05"] > best[0]:
