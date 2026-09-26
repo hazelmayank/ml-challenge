@@ -12,7 +12,7 @@ import polars as pl
 from rapidfuzz import fuzz, process
 from rapidfuzz.distance import JaroWinkler, Levenshtein
 
-from config import WORK
+from config import WORK, parts_dir
 
 RECORDS = 100_000  # S2/S3 records per chunk (~1M candidate pairs)
 TEXT = ["name_norm", "name_core", "name_compact", "addr_norm", "addr_nums", "addr_ids",
@@ -41,6 +41,10 @@ FEATURES = (
     + [f"{c}_{n}" for c, fs in SIMS.items() for n, _ in fs]
     + DIFF
 )
+# Embedding features from embed.py (run it after block.py). BER_EMB=0 for runs without a GPU.
+EMB = os.environ.get("BER_EMB", "1") != "0"
+if EMB:
+    FEATURES += ["emb_sim", "emb_gap", "erank"]
 
 
 def _related(x: str, y: str) -> bool:
@@ -150,9 +154,13 @@ def build(name):
                 .rename({"k": "s23k"}))
     s1 = (pl.read_parquet(WORK / f"{split}_s1.parquet", columns=["k"] + TEXT)
           .rename({c: f"{c}_1" for c in TEXT}).rename({"k": "s1k"}))
+    if EMB and "emb_sim" not in cand_scan.collect_schema().names():
+        raise SystemExit(f"{name}.parquet has no embedding columns: run embed.py first "
+                         "(or set BER_EMB=0)")
     max_k = cand_scan.select(pl.col("s23k").max()).collect().item()
-    tmp = WORK / f"{name}_feat_parts"
-    tmp.mkdir(exist_ok=True)
+    fp = f"{FEATURES} " + str(cand_scan.select(
+        pl.len(), pl.col("s23k").sum(), pl.col("s1k").sum(), pl.col("bscore").sum()).collect().row(0))
+    tmp = parts_dir(WORK / f"{name}_feat_parts", fp)
     for lo in range(0, max_k + 1, RECORDS):
         part = tmp / f"{lo:09d}_{RECORDS}.parquet"
         if part.exists():

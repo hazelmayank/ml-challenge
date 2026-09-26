@@ -1,6 +1,6 @@
 # Amazon ML Challenge 2026: Project Context
 
-_Last updated: 26 Sep 2026, ~18:50 IST_
+_Last updated: 26 Sep 2026, ~21:00 IST_
 
 This file is the single source of truth for the team: what the problem is, what has been built, what we learned from the data, current scores, and what comes next.
 
@@ -101,6 +101,10 @@ This file is the single source of truth for the team: what the problem is, what 
 | 25 Sep ~23:15 | LightGBM v1: 23 features, 2-fold OOF, argmax + threshold t=0.30 | **CV 0.97638** (pair P 0.994, R 0.948, singletons 0.977) |
 | 26 Sep ~01:00 | Test run v1: 98.4M candidate pairs → 5.91M matches; validator **PASS**. Per country: France 4.5% empty, 3.56 matches per S1; India 5.8% / 3.35; US 5.4% / 3.44 | ready to submit |
 | — | Submission #1 (public LB) | _user to upload `output/matching_results.tsv` and report the score_ |
+| 26 Sep ~19:30 | **Kaggle smoke test** (v2, 2% sample, commit a04a46e): recall@10 0.9758, ceiling 0.99192 | **CV 0.98626** at t=0.20 (grid edge → grid now starts at 0.05) |
+| 26 Sep ~20:00 | Kaggle v2 25% blocking: recall@10 **0.9768**; features ~6 s per 250k pairs (2× laptop) | full train running |
+| 26 Sep ~20:30 | **Blocking-miss analysis** (v2, 25%): 36.0k of 1.90M links missed (1.9%). Address missing 14.4k (**18.6% miss rate** for no-address records), both fields similar but typo'd 7.5k, Indic not in dictionary 5.7k (4.2%), address ok + domain/alias name 4.5k, name ok + address variant 2.6k, both differ 1.4k. India 3.1% vs US 1.1%. | → `embed.py` |
+| 26 Sep ~21:00 | **`embed.py` (GPU)**: multilingual-e5-small name+address embeddings, per-country top-10 kNN added as candidates + `emb_sim`/`emb_gap`/`erank` features. Tested locally on CPU (mini data); Kaggle probe pending | _probe pending_ |
 | 26 Sep ~01:45 | **v2 started.** Changes: Indic dictionary; `legal`/`addr_ids`/`hnum` fields; 9 difference features (legal_rel, hnum_rel, hnum_lev, ids extra counts, unmatched name words, first-word similarity) + addr_ids similarities; empty fields read as ""; French street words; LightGBM 63 leaves, ≤800 rounds. v1 model archived in `work/v1/`. | _running_ |
 
 ## 6. Plan / roadmap
